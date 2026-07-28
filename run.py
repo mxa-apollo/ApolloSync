@@ -2,26 +2,34 @@
 
 from __future__ import annotations
 
-import sys
-from threading import Event
+from time import sleep
 
+from src.config import ConfigError
+from src.logger import get_logger
 from src.main import ApolloSyncApp
+
+logger = get_logger(__name__)
 
 
 def main() -> int:
     """Run Apollo Sync until the user interrupts it with Ctrl+C."""
     app = ApolloSyncApp()
     try:
+        logger.info("Apollo Sync starting.")
         app.start()
-        print("Apollo Sync is watching playlists. Press Ctrl+C to stop.")
-        Event().wait()
+        while True:
+            sleep(0.1)
     except KeyboardInterrupt:
-        print("\nApollo Sync stopped.")
         return 0
+    except ConfigError as exc:
+        logger.warning("Invalid configuration fallback: console logging is active.")
+        logger.error("Apollo Sync could not start: %s", exc)
+        return 1
     except Exception as exc:
-        print(f"Apollo Sync: could not start: {exc}", file=sys.stderr)
+        logger.error("Apollo Sync could not start: %s", exc)
         return 1
     finally:
+        logger.info("Apollo Sync shutting down.")
         app.stop()
 
 

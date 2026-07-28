@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from threading import Lock
 
 from .config import Config
 from .converter import convert_playlist
+from .logger import get_logger
 from .watcher import PlaylistWatcher
 
 __all__ = ["ApolloSyncApp"]
+
+logger = get_logger(__name__)
 
 
 class ApolloSyncApp:
@@ -56,6 +58,7 @@ class ApolloSyncApp:
                 raise RuntimeError("ApolloSyncApp is already running.")
 
             config = Config.load(self._config_path)
+            logger.info("Configuration loaded.")
             watcher = PlaylistWatcher(
                 config.playlist_path,
                 self.process_playlist,
@@ -91,8 +94,8 @@ class ApolloSyncApp:
         try:
             with self._processing_lock:
                 self._process_playlist(playlist_path)
-        except Exception as exc:
-            print(f"Apollo Sync: could not process '{playlist_path}': {exc}", file=sys.stderr)
+        except Exception:
+            logger.exception("Unexpected callback exception.")
 
     def _process_playlist(self, playlist_path: Path) -> None:
         """Perform the read-convert-write workflow for one playlist path."""
@@ -100,11 +103,22 @@ class ApolloSyncApp:
         if config is None:
             raise RuntimeError("ApolloSyncApp has not been started.")
 
-        raw_playlist = playlist_path.read_bytes()
+        try:
+            raw_playlist = playlist_path.read_bytes()
+        except OSError:
+            logger.exception("Failed reading playlist: %s", playlist_path)
+            return
+
         playlist_text, encoding = _decode_playlist_text(raw_playlist)
         result = convert_playlist(playlist_text, config.music_root, playlist_path)
+        logger.info("Playlist processed: %s", playlist_path)
         if result.changed:
-            playlist_path.write_bytes(result.converted_text.encode(encoding))
+            try:
+                playlist_path.write_bytes(result.converted_text.encode(encoding))
+            except OSError:
+                logger.exception("Failed writing playlist: %s", playlist_path)
+                return
+            logger.info("Playlist updated: %s", playlist_path)
 
 
 def _decode_playlist_text(data: bytes) -> tuple[str, str]:

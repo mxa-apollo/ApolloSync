@@ -10,9 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
+from .logger import get_logger
+
 __all__ = ["ConversionResult", "convert_playlist"]
 
 _SUPPORTED_EXTENSIONS = frozenset({".m3u", ".m3u8"})
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +86,7 @@ def convert_playlist(
     root = _absolute_windows_path("music_root", music_root)
     destination = _absolute_windows_path("playlist_path", playlist_path)
     if destination.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+        logger.warning("Unsupported playlist format ignored.")
         extensions = ", ".join(sorted(_SUPPORTED_EXTENSIONS))
         raise ValueError(f"'playlist_path' must have one of these extensions: {extensions}.")
 
@@ -140,12 +145,14 @@ def _convert_path_if_eligible(
     try:
         candidate.relative_to(music_root)
     except ValueError:
+        logger.warning("Playlist path outside music root ignored.")
         return line
 
     # Windows has no relative path syntax across drives or UNC shares.
     if candidate.drive.casefold() != playlist_directory.drive.casefold():
         return line
 
+    logger.debug("Converted an absolute playlist path to a relative path.")
     return str(_relative_windows_path(candidate, playlist_directory))
 
 

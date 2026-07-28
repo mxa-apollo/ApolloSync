@@ -8,15 +8,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from threading import RLock, Timer
+from threading import RLock, Timer, current_thread
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+
+from .logger import get_logger
 
 __all__ = ["PlaylistWatcher"]
 
 _PLAYLIST_EXTENSIONS = frozenset({".m3u", ".m3u8"})
 _IGNORED_SUFFIXES = frozenset({".bak", ".backup", ".part", ".swp", ".swo", ".tmp", ".temp"})
+_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 1.0
+
+logger = get_logger(__name__)
 
 
 class PlaylistWatcher(FileSystemEventHandler):
@@ -91,6 +96,7 @@ class PlaylistWatcher(FileSystemEventHandler):
                 raise RuntimeError("PlaylistWatcher is already running.")
 
             observer = Observer()
+            observer.daemon = True
             observer.schedule(self, str(self._playlist_folder), recursive=False)
             try:
                 observer.start()
@@ -98,12 +104,14 @@ class PlaylistWatcher(FileSystemEventHandler):
                 observer.unschedule_all()
                 raise
             self._observer = observer
+            logger.info("Watching playlist folder: %s", self._playlist_folder)
 
     def stop(self) -> None:
         """Stop observing and cancel callbacks that have not fired yet.
 
-        The method is idempotent. It waits for the observer thread to finish,
-        but does not attempt to interrupt a callback already in progress.
+        The method is idempotent. Pending timers are cancelled and joined. The
+        observer is stopped and joined with a bounded wait so shutdown cannot
+        hang indefinitely. A callback already in progress is not interrupted.
         """
         with self._lock:
             observer = self._observer
@@ -114,9 +122,13 @@ class PlaylistWatcher(FileSystemEventHandler):
         for timer in timers:
             timer.cancel()
 
+        for timer in timers:
+            if timer is not current_thread():
+                timer.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+
         if observer is not None:
             observer.stop()
-            observer.join()
+            observer.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
 
     def on_created(self, event: FileSystemEvent) -> None:
         """Queue a callback when a playlist is created."""
@@ -147,6 +159,7 @@ class PlaylistWatcher(FileSystemEventHandler):
         """Replace the pending timer for one eligible playlist path."""
         path = path.absolute()
         if not self._is_eligible_playlist(path):
+            logger.debug("Ignored filesystem event for an ineligible playlist path.")
             return
 
         with self._lock:
@@ -157,6 +170,7 @@ class PlaylistWatcher(FileSystemEventHandler):
             if previous_timer is not None:
                 previous_timer.cancel()
 
+            logger.debug("Debouncing playlist change event.")
             timer = Timer(self._debounce_seconds, self._deliver_callback, args=(path,))
             timer.daemon = True
             self._timers[path] = timer
@@ -169,7 +183,11 @@ class PlaylistWatcher(FileSystemEventHandler):
                 return
             self._timers.pop(path, None)
 
-        self._on_playlist_changed(path)
+        logger.info("Playlist changed: %s", path)
+        try:
+            self._on_playlist_changed(path)
+        except Exception:
+            logger.exception("Unexpected callback exception.")
 
     def _is_eligible_playlist(self, path: Path) -> bool:
         """Return whether *path* is a direct, non-temporary playlist child."""
