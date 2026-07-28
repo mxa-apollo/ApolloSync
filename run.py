@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from time import sleep
 
 from src.config import ConfigError
@@ -17,7 +18,7 @@ def main() -> int:
     try:
         logger.info("Apollo Sync starting.")
         app.start()
-        while True:
+        while not app.shutdown_requested:
             sleep(0.1)
     except KeyboardInterrupt:
         return 0
@@ -31,6 +32,7 @@ def main() -> int:
     finally:
         logger.info("Apollo Sync shutting down.")
         app.stop()
+        logging.shutdown()
 
 
 if __name__ == "__main__":

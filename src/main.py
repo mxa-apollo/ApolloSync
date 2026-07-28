@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 
 from .config import Config
 from .converter import convert_playlist
 from .logger import get_logger
+from .tray import ApolloSyncTray
 from .watcher import PlaylistWatcher
 
 __all__ = ["ApolloSyncApp"]
@@ -36,6 +38,8 @@ class ApolloSyncApp:
         self._config_path = Path(config_path)
         self._config: Config | None = None
         self._watcher: PlaylistWatcher | None = None
+        self._tray: ApolloSyncTray | None = None
+        self._shutdown_requested = Event()
         self._state_lock = Lock()
         self._processing_lock = Lock()
 
@@ -69,6 +73,15 @@ class ApolloSyncApp:
             self._config = config
             watcher.start()
             self._watcher = watcher
+            tray = ApolloSyncTray(
+                open_music_folder=self.open_music_folder,
+                open_playlists_folder=self.open_playlists_folder,
+                open_logs_folder=self.open_logs_folder,
+                run_scan_now=self.run_scan_now,
+                exit_callback=self.request_exit,
+            )
+            self._tray = tray
+            tray.start()
 
     def stop(self) -> None:
         """Stop filesystem monitoring and cancel pending playlist callbacks.
@@ -79,10 +92,65 @@ class ApolloSyncApp:
         """
         with self._state_lock:
             watcher = self._watcher
+            tray = self._tray
             self._watcher = None
+            self._tray = None
 
         if watcher is not None:
             watcher.stop()
+        if tray is not None:
+            tray.stop()
+
+    @property
+    def shutdown_requested(self) -> bool:
+        """Return whether the tray Exit action requested application shutdown."""
+        return self._shutdown_requested.is_set()
+
+    def request_exit(self) -> None:
+        """Request clean shutdown from a non-main thread such as the tray UI."""
+        self._shutdown_requested.set()
+
+    def open_music_folder(self) -> None:
+        """Open the configured music directory in Windows Explorer."""
+        self._open_folder(self._require_config().music_root)
+
+    def open_playlists_folder(self) -> None:
+        """Open the configured playlist directory in Windows Explorer."""
+        self._open_folder(self._require_config().playlist_path)
+
+    def open_logs_folder(self) -> None:
+        """Open Apollo Sync's log directory in Windows Explorer."""
+        self._open_folder(Path.cwd() / "logs")
+
+    def run_scan_now(self) -> None:
+        """Process every direct M3U playlist in the configured playlist folder."""
+        config = self._require_config()
+        try:
+            playlist_paths = tuple(
+                path
+                for pattern in ("*.m3u", "*.m3u8")
+                for path in config.playlist_path.glob(pattern)
+            )
+        except OSError:
+            logger.exception("Failed listing playlist folder for manual scan.")
+            return
+
+        for playlist_path in playlist_paths:
+            self.process_playlist(playlist_path)
+
+    def _require_config(self) -> Config:
+        """Return startup configuration or fail clearly before the app starts."""
+        if self._config is None:
+            raise RuntimeError("ApolloSyncApp has not been started.")
+        return self._config
+
+    @staticmethod
+    def _open_folder(path: Path) -> None:
+        """Open *path* with Windows Explorer and report failures through logging."""
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]  # Windows-only API.
+        except (AttributeError, OSError):
+            logger.exception("Failed opening folder: %s", path)
 
     def process_playlist(self, playlist_path: Path) -> None:
         """Convert one changed playlist, reporting failures without stopping the app.
