@@ -9,6 +9,7 @@ from threading import Event, Lock
 from .config import Config
 from .converter import convert_playlist
 from .logger import get_logger
+from .startup import apply_startup_setting
 from .tray import ApolloSyncTray
 from .utils import logs_directory
 from .watcher import PlaylistWatcher
@@ -64,6 +65,7 @@ class ApolloSyncApp:
 
             config = Config.load(self._config_path)
             logger.info("Configuration loaded.")
+            apply_startup_setting(config.start_with_windows)
             watcher = PlaylistWatcher(
                 config.playlist_path,
                 self.process_playlist,
