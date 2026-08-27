@@ -13,11 +13,11 @@ from pathlib import Path
 from threading import RLock
 
 from .config import Config as _Config
+from .utils import logs_directory
 
 __all__ = ["get_logger"]
 
 _LOGGER_NAMESPACE = "apollosync"
-_LOG_DIRECTORY = Path("logs")
 _LOG_FILE_NAME = "apollosync.log"
 _MAX_LOG_BYTES = 1_024 * 1_024
 _BACKUP_COUNT = 5
@@ -84,7 +84,7 @@ def _configure_once() -> None:
 
 def _create_file_handler() -> RotatingFileHandler:
     """Create the rotating UTF-8 application log file handler."""
-    log_directory = Path.cwd() / _LOG_DIRECTORY
+    log_directory = logs_directory()
     log_directory.mkdir(parents=True, exist_ok=True)
     return RotatingFileHandler(
         log_directory / _LOG_FILE_NAME,

@@ -6,6 +6,4 @@ dist/
 
 logs/
 
-*.spec
-
 .venv/

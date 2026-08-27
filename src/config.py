@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
+from .utils import config_path
+
 
 class ConfigError(ValueError):
     """Base exception raised when ApolloSync configuration is unusable."""
@@ -88,12 +90,12 @@ class Config:
         return self.music_root / self.playlist_folder
 
     @classmethod
-    def load(cls, path: Path | str = DEFAULT_FILE_NAME) -> "Config":
+    def load(cls, path: Path | str | None = None) -> "Config":
         """Load configuration from *path*.
 
         Args:
-            path: JSON configuration file. The default is ``config.json`` in
-                the current working directory.
+            path: JSON configuration file. When omitted, the external
+                ``config.json`` beside the source project or executable is used.
 
         Raises:
             ConfigFileError: If the file is missing, unreadable, malformed, or
@@ -101,29 +103,31 @@ class Config:
             ConfigError: If a required setting is missing or any setting has
                 an invalid value.
         """
-        config_path = Path(path)
+        config_file_path = config_path() if path is None else Path(path)
+        if not config_file_path.is_absolute():
+            config_file_path = config_path().parent / config_file_path
         try:
-            with config_path.open("r", encoding="utf-8") as config_file:
+            with config_file_path.open("r", encoding="utf-8") as config_file:
                 data = json.load(config_file)
         except FileNotFoundError as exc:
-            raise ConfigFileError(f"Configuration file not found: {config_path}") from exc
+            raise ConfigFileError(f"Configuration file not found: {config_file_path}") from exc
         except OSError as exc:
             raise ConfigFileError(
-                f"Could not read configuration file '{config_path}': {exc}"
+                f"Could not read configuration file '{config_file_path}': {exc}"
             ) from exc
         except UnicodeDecodeError as exc:
             raise ConfigFileError(
-                f"Configuration file '{config_path}' must be UTF-8 encoded."
+                f"Configuration file '{config_file_path}' must be UTF-8 encoded."
             ) from exc
         except json.JSONDecodeError as exc:
             raise ConfigFileError(
-                f"Configuration file '{config_path}' contains invalid JSON: {exc.msg} "
+                f"Configuration file '{config_file_path}' contains invalid JSON: {exc.msg} "
                 f"(line {exc.lineno}, column {exc.colno})."
             ) from exc
 
         if not isinstance(data, Mapping):
             raise ConfigFileError(
-                f"Configuration file '{config_path}' must contain a JSON object."
+                f"Configuration file '{config_file_path}' must contain a JSON object."
             )
 
         return cls.from_mapping(data)

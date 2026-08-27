@@ -10,6 +10,7 @@ from .config import Config
 from .converter import convert_playlist
 from .logger import get_logger
 from .tray import ApolloSyncTray
+from .utils import logs_directory
 from .watcher import PlaylistWatcher
 
 __all__ = ["ApolloSyncApp"]
@@ -33,9 +34,9 @@ class ApolloSyncApp:
         False
     """
 
-    def __init__(self, config_path: Path | str = Config.DEFAULT_FILE_NAME) -> None:
+    def __init__(self, config_path: Path | str | None = None) -> None:
         """Create an application instance without loading configuration yet."""
-        self._config_path = Path(config_path)
+        self._config_path = config_path
         self._config: Config | None = None
         self._watcher: PlaylistWatcher | None = None
         self._tray: ApolloSyncTray | None = None
@@ -120,7 +121,7 @@ class ApolloSyncApp:
 
     def open_logs_folder(self) -> None:
         """Open Apollo Sync's log directory in Windows Explorer."""
-        self._open_folder(Path.cwd() / "logs")
+        self._open_folder(logs_directory())
 
     def run_scan_now(self) -> None:
         """Process every direct M3U playlist in the configured playlist folder."""
