@@ -7,9 +7,9 @@ from pathlib import Path
 from threading import Event, Lock
 
 from .config import Config
-from .converter import convert_playlist
 from .logger import get_logger
 from .startup import apply_startup_setting
+from .sync import SyncEngine
 from .tray import ApolloSyncTray
 from .utils import logs_directory
 from .watcher import PlaylistWatcher
@@ -41,9 +41,9 @@ class ApolloSyncApp:
         self._config: Config | None = None
         self._watcher: PlaylistWatcher | None = None
         self._tray: ApolloSyncTray | None = None
+        self._sync: SyncEngine | None = None
         self._shutdown_requested = Event()
         self._state_lock = Lock()
-        self._processing_lock = Lock()
 
     @property
     def is_running(self) -> bool:
@@ -74,17 +74,48 @@ class ApolloSyncApp:
             # Set configuration before starting the observer so a fast event
             # can always be processed with a fully initialized application.
             self._config = config
-            watcher.start()
+            self._sync = SyncEngine(config)
+            try:
+                watcher.start()
+            except Exception:
+                sync = self._sync
+                self._sync = None
+                try:
+                    if sync is not None:
+                        sync.stop()
+                except Exception:
+                    logger.exception("Failed cleaning up after watcher startup failure.")
+                raise
             self._watcher = watcher
-            tray = ApolloSyncTray(
-                open_music_folder=self.open_music_folder,
-                open_playlists_folder=self.open_playlists_folder,
-                open_logs_folder=self.open_logs_folder,
-                run_scan_now=self.run_scan_now,
-                exit_callback=self.request_exit,
-            )
-            self._tray = tray
-            tray.start()
+            try:
+                tray = ApolloSyncTray(
+                    open_music_folder=self.open_music_folder,
+                    open_playlists_folder=self.open_playlists_folder,
+                    open_logs_folder=self.open_logs_folder,
+                    run_scan_now=self.run_scan_now,
+                    exit_callback=self.request_exit,
+                )
+                self._tray = tray
+                tray.start()
+            except Exception:
+                failed_watcher = self._watcher
+                failed_sync = self._sync
+                failed_tray = self._tray
+                self._watcher = None
+                self._sync = None
+                self._tray = None
+                for component, cleanup in (
+                    ("tray", failed_tray.stop if failed_tray is not None else None),
+                    ("watcher", failed_watcher.stop if failed_watcher is not None else None),
+                    ("sync", failed_sync.stop if failed_sync is not None else None),
+                ):
+                    if cleanup is None:
+                        continue
+                    try:
+                        cleanup()
+                    except Exception:
+                        logger.exception("Failed cleaning up %s after startup failure.", component)
+                raise
 
     def stop(self) -> None:
         """Stop filesystem monitoring and cancel pending playlist callbacks.
@@ -96,11 +127,15 @@ class ApolloSyncApp:
         with self._state_lock:
             watcher = self._watcher
             tray = self._tray
+            sync = self._sync
             self._watcher = None
             self._tray = None
+            self._sync = None
 
         if watcher is not None:
             watcher.stop()
+        if sync is not None:
+            sync.stop()
         if tray is not None:
             tray.stop()
 
@@ -128,6 +163,7 @@ class ApolloSyncApp:
     def run_scan_now(self) -> None:
         """Process every direct M3U playlist in the configured playlist folder."""
         config = self._require_config()
+        logger.info("Manual playlist scan started.")
         try:
             playlist_paths = tuple(
                 path
@@ -138,8 +174,10 @@ class ApolloSyncApp:
             logger.exception("Failed listing playlist folder for manual scan.")
             return
 
-        for playlist_path in playlist_paths:
-            self.process_playlist(playlist_path)
+        sync = self._sync
+        if sync is not None:
+            sync.scan(playlist_paths)
+            logger.info("Manual playlist scan completed: %d playlists.", len(playlist_paths))
 
     def _require_config(self) -> Config:
         """Return startup configuration or fail clearly before the app starts."""
@@ -156,49 +194,7 @@ class ApolloSyncApp:
             logger.exception("Failed opening folder: %s", path)
 
     def process_playlist(self, playlist_path: Path) -> None:
-        """Convert one changed playlist, reporting failures without stopping the app.
-
-        The watcher invokes this method on a background timer thread. The
-        process-wide lock serializes reads and writes so a long-running callback
-        cannot overlap another conversion operation.
-        """
-        try:
-            with self._processing_lock:
-                self._process_playlist(playlist_path)
-        except Exception:
-            logger.exception("Unexpected callback exception.")
-
-    def _process_playlist(self, playlist_path: Path) -> None:
-        """Perform the read-convert-write workflow for one playlist path."""
-        config = self._config
-        if config is None:
-            raise RuntimeError("ApolloSyncApp has not been started.")
-
-        try:
-            raw_playlist = playlist_path.read_bytes()
-        except OSError:
-            logger.exception("Failed reading playlist: %s", playlist_path)
-            return
-
-        playlist_text, encoding = _decode_playlist_text(raw_playlist)
-        result = convert_playlist(playlist_text, config.music_root, playlist_path)
-        logger.info("Playlist processed: %s", playlist_path)
-        if result.changed:
-            try:
-                playlist_path.write_bytes(result.converted_text.encode(encoding))
-            except OSError:
-                logger.exception("Failed writing playlist: %s", playlist_path)
-                return
-            logger.info("Playlist updated: %s", playlist_path)
-
-
-def _decode_playlist_text(data: bytes) -> tuple[str, str]:
-    """Decode playlist bytes as UTF-8, falling back to Windows cp1252.
-
-    The returned encoding is the exact encoding used for a later write, so
-    conversion does not silently change the playlist's character encoding.
-    """
-    try:
-        return data.decode("utf-8"), "utf-8"
-    except UnicodeDecodeError:
-        return data.decode("cp1252"), "cp1252"
+        """Queue one changed playlist for the shared synchronization pipeline."""
+        sync = self._sync
+        if sync is not None:
+            sync.submit(playlist_path)
