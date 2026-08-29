@@ -9,9 +9,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from .logger import get_logger
+from .utils import asset_path
 
 __all__ = ["ApolloSyncTray"]
 
@@ -41,7 +42,7 @@ class ApolloSyncTray:
         """Create the tray icon without starting its UI loop."""
         self._icon = pystray.Icon(
             name="apollo_sync",
-            icon=_create_icon(),
+            icon=_load_icon(),
             title="Apollo Sync — 🟢 Watching",
             menu=pystray.Menu(
                 pystray.MenuItem("🟢 Watching", lambda _icon, _item: None, enabled=False),
@@ -87,11 +88,16 @@ def _menu_action(callback: Callable[[], None]) -> Callable[[pystray.Icon, pystra
     return invoke
 
 
-def _create_icon() -> Image.Image:
-    """Create a small green Apollo Sync status icon without external assets."""
-    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    drawing = ImageDraw.Draw(image)
-    drawing.ellipse((6, 6, 58, 58), fill=(35, 170, 80, 255))
-    drawing.ellipse((15, 15, 49, 49), fill=(255, 255, 255, 255))
-    drawing.ellipse((23, 23, 41, 41), fill=(35, 170, 80, 255))
-    return image
+def _load_icon() -> Image.Image:
+    """Load the supplied branding icon, with a safe blank fallback if absent."""
+    icon_file = asset_path("icon.ico")
+    try:
+        with Image.open(icon_file) as source:
+            icon = source.convert("RGBA")
+            icon.load()
+            return icon
+    except (FileNotFoundError, OSError) as exc:
+        logger.error("Apollo Sync tray icon unavailable at %s: %s", icon_file, exc)
+        # pystray requires an image object; keep the tray usable without
+        # inventing replacement artwork when a deployment omits the asset.
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))

@@ -71,8 +71,23 @@ def assets_directory() -> Path:
 
 
 def asset_path(name: str | Path) -> Path:
-    """Return the path to one asset, such as the future ``icon.ico`` file."""
+    """Return the path to one asset, such as the future ``icon.ico`` file.
+
+    In a PyInstaller one-folder build, PyInstaller 6 may place collected data
+    under its private ``_internal`` directory. External assets beside the
+    executable are preferred; the private bundled location is a fallback only
+    for packaged assets and is never used for config or logs.
+    """
     path = Path(name)
     if path.is_absolute() or ".." in path.parts:
         raise ValueError("Asset names must remain inside the assets directory.")
-    return assets_directory() / path
+    external_path = assets_directory() / path
+    if external_path.exists() or not is_frozen():
+        return external_path
+
+    extraction_directory = getattr(sys, "_MEIPASS", None)
+    if extraction_directory:
+        bundled_path = Path(extraction_directory) / "assets" / path
+        if bundled_path.exists():
+            return bundled_path
+    return external_path
