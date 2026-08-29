@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from threading import Event, Lock
 
 from .config import Config
+from .config_manager import ConfigManager
 from .logger import get_logger
+from .notifier import notify
 from .startup import apply_startup_setting
 from .sync import SyncEngine
 from .tray import ApolloSyncTray
@@ -42,6 +45,7 @@ class ApolloSyncApp:
         self._watcher: PlaylistWatcher | None = None
         self._tray: ApolloSyncTray | None = None
         self._sync: SyncEngine | None = None
+        self._config_manager: ConfigManager | None = None
         self._shutdown_requested = Event()
         self._state_lock = Lock()
 
@@ -63,7 +67,10 @@ class ApolloSyncApp:
             if self._watcher is not None:
                 raise RuntimeError("ApolloSyncApp is already running.")
 
-            config = Config.load(self._config_path)
+            config_manager = ConfigManager(
+                self._config_path, on_reload_error=self._on_config_reload_error
+            )
+            config = config_manager.current
             logger.info("Configuration loaded.")
             apply_startup_setting(config.start_with_windows)
             watcher = PlaylistWatcher(
@@ -74,12 +81,14 @@ class ApolloSyncApp:
             # Set configuration before starting the observer so a fast event
             # can always be processed with a fully initialized application.
             self._config = config
+            self._config_manager = config_manager
             self._sync = SyncEngine(config)
             try:
                 watcher.start()
             except Exception:
                 sync = self._sync
                 self._sync = None
+                self._config_manager = None
                 try:
                     if sync is not None:
                         sync.stop()
@@ -104,6 +113,7 @@ class ApolloSyncApp:
                 self._watcher = None
                 self._sync = None
                 self._tray = None
+                self._config_manager = None
                 for component, cleanup in (
                     ("tray", failed_tray.stop if failed_tray is not None else None),
                     ("watcher", failed_watcher.stop if failed_watcher is not None else None),
@@ -116,6 +126,11 @@ class ApolloSyncApp:
                     except Exception:
                         logger.exception("Failed cleaning up %s after startup failure.", component)
                 raise
+            config_manager.subscribe(self._on_config_changed)
+            try:
+                config_manager.start()
+            except Exception:
+                logger.exception("Configuration watcher failed to start; continuing without live reload.")
 
     def stop(self) -> None:
         """Stop filesystem monitoring and cancel pending playlist callbacks.
@@ -128,16 +143,42 @@ class ApolloSyncApp:
             watcher = self._watcher
             tray = self._tray
             sync = self._sync
+            config_manager = self._config_manager
             self._watcher = None
             self._tray = None
             self._sync = None
+            self._config_manager = None
 
+        if config_manager is not None:
+            config_manager.stop()
         if watcher is not None:
             watcher.stop()
         if sync is not None:
             sync.stop()
         if tray is not None:
             tray.stop()
+
+    def _on_config_changed(self, old: Config, new: Config) -> None:
+        """Apply one atomically replaced configuration to running services."""
+        self._config = new
+        sync = self._sync
+        watcher = self._watcher
+        if sync is not None:
+            sync.update_config(new)
+        if watcher is not None:
+            watcher.update_configuration(new.playlist_path, new.debounce_ms)
+        logging.getLogger("apollosync").setLevel(getattr(logging, new.log_level))
+        if old.start_with_windows != new.start_with_windows:
+            apply_startup_setting(new.start_with_windows)
+
+    def _on_config_reload_error(self, error: Exception, config: Config) -> None:
+        """Report an invalid reload without disturbing the active configuration."""
+        if not config.notifications:
+            return
+        try:
+            notify("Configuration reload failed", type(error).__name__)
+        except Exception:
+            logger.exception("Configuration reload notification failed.")
 
     @property
     def shutdown_requested(self) -> bool:

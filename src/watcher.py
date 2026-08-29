@@ -130,6 +130,39 @@ class PlaylistWatcher(FileSystemEventHandler):
             observer.stop()
             observer.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
 
+    def update_configuration(self, playlist_folder: Path | str, debounce_ms: int) -> None:
+        """Apply watcher settings, recreating the observer only if its path changed."""
+        new_folder = Path(playlist_folder).expanduser().absolute()
+        if isinstance(debounce_ms, bool) or not isinstance(debounce_ms, int) or debounce_ms <= 0:
+            raise ValueError("'debounce_ms' must be an integer greater than zero.")
+
+        with self._lock:
+            path_changed = new_folder != self._playlist_folder
+            was_running = self._observer is not None
+            old_folder = self._playlist_folder
+            old_debounce_seconds = self._debounce_seconds
+
+            if not path_changed or not was_running:
+                self._debounce_seconds = debounce_ms / 1_000
+                self._playlist_folder = new_folder
+                return
+
+        self.stop()
+        with self._lock:
+            self._debounce_seconds = debounce_ms / 1_000
+            self._playlist_folder = new_folder
+        try:
+            self.start()
+        except Exception:
+            with self._lock:
+                self._playlist_folder = old_folder
+                self._debounce_seconds = old_debounce_seconds
+            try:
+                self.start()
+            except Exception:
+                logger.exception("Failed restoring the previous playlist watcher configuration.")
+            raise
+
     def on_created(self, event: FileSystemEvent) -> None:
         """Queue a callback when a playlist is created."""
         self._queue_event_path(event)

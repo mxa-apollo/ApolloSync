@@ -41,6 +41,7 @@ class SyncEngine:
     ) -> None:
         """Create and start the single background processing worker."""
         self._config = config
+        self._config_lock = Lock()
         self._notifier = notifier
         self._queue: queue.Queue[_WorkItem | None] = queue.Queue()
         self._lock = Lock()
@@ -50,6 +51,11 @@ class SyncEngine:
         self._accepting = True
         self._worker = Thread(target=self._run, name="apollo-sync-worker", daemon=True)
         self._worker.start()
+
+    def update_config(self, config: Config) -> None:
+        """Atomically replace the configuration used by future processing."""
+        with self._config_lock:
+            self._config = config
 
     def submit(self, playlist_path: Path | str) -> bool:
         """Queue a playlist without blocking the filesystem observer thread.
@@ -147,6 +153,9 @@ class SyncEngine:
             return
 
         logger.info("Playlist processing started: %s", playlist_path)
+        with self._config_lock:
+            config = self._config
+
         try:
             raw = playlist_path.read_bytes()
             text, encoding = _decode_playlist(raw)
@@ -156,7 +165,7 @@ class SyncEngine:
             return
 
         try:
-            result = convert_playlist(text, self._config.music_root, playlist_path)
+            result = convert_playlist(text, config.music_root, playlist_path)
         except Exception as exc:
             logger.error("Failed converting playlist %s (%s): %s", playlist_path, type(exc).__name__, exc)
             self._send_failure(playlist_path)
@@ -174,7 +183,7 @@ class SyncEngine:
             return
 
         logger.info("Playlist successfully synced: %s", playlist_path)
-        if self._config.notifications:
+        if config.notifications:
             try:
                 self._notifier("Playlist synced", playlist_path.name)
             except Exception:
@@ -182,7 +191,9 @@ class SyncEngine:
 
     def _send_failure(self, playlist_path: Path) -> None:
         """Send a best-effort failure notification."""
-        if not self._config.notifications:
+        with self._config_lock:
+            notifications_enabled = self._config.notifications
+        if not notifications_enabled:
             return
         try:
             self._notifier("Playlist sync failed", playlist_path.name)
