@@ -1,9 +1,27 @@
 __pycache__/
 *.pyc
+*.pyo
 
 build/
 dist/
 
 logs/
+*.log
+*.tmp
+*.lnk
 
 .venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Local machine configuration; use config.example.json for public distribution.
+config.json
+config.local.json
+
+# Common editor and operating-system metadata.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+{
+  "music_root": "D:\\Music",
+  "playlist_folder": "Playlists",
+  "notifications": true,
+  "start_with_windows": false,
+  "debounce_ms": 500,
+  "log_level": "INFO"
+}

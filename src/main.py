@@ -13,6 +13,7 @@ from .logger import get_logger
 from .notifier import notify
 from .startup import apply_startup_setting
 from .sync import SyncEngine
+from .status import ApplicationStatus, StatusSnapshot
 from .tray import ApolloSyncTray
 from .utils import logs_directory
 from .watcher import PlaylistWatcher
@@ -48,6 +49,12 @@ class ApolloSyncApp:
         self._config_manager: ConfigManager | None = None
         self._shutdown_requested = Event()
         self._state_lock = Lock()
+        self._status = ApplicationStatus()
+
+    @property
+    def status(self) -> StatusSnapshot:
+        """Return an immutable snapshot of current application diagnostics."""
+        return self._status.current
 
     @property
     def is_running(self) -> bool:
@@ -66,11 +73,16 @@ class ApolloSyncApp:
         with self._state_lock:
             if self._watcher is not None:
                 raise RuntimeError("ApolloSyncApp is already running.")
+            self._status.set_starting()
 
-            config_manager = ConfigManager(
-                self._config_path, on_reload_error=self._on_config_reload_error
-            )
-            config = config_manager.current
+            try:
+                config_manager = ConfigManager(
+                    self._config_path, on_reload_error=self._on_config_reload_error
+                )
+                config = config_manager.current
+            except Exception as exc:
+                self._status.set_error(str(exc))
+                raise
             logger.info("Configuration loaded.")
             apply_startup_setting(config.start_with_windows)
             watcher = PlaylistWatcher(
@@ -82,10 +94,11 @@ class ApolloSyncApp:
             # can always be processed with a fully initialized application.
             self._config = config
             self._config_manager = config_manager
-            self._sync = SyncEngine(config)
+            self._sync = SyncEngine(config, status=self._status)
             try:
                 watcher.start()
             except Exception:
+                self._status.set_error("Watcher startup failed")
                 sync = self._sync
                 self._sync = None
                 self._config_manager = None
@@ -103,10 +116,13 @@ class ApolloSyncApp:
                     open_logs_folder=self.open_logs_folder,
                     run_scan_now=self.run_scan_now,
                     exit_callback=self.request_exit,
+                    status_provider=lambda: self._status.current,
                 )
                 self._tray = tray
                 tray.start()
+                self._status.subscribe(tray.refresh_status)
             except Exception:
+                self._status.set_error("Tray startup failed")
                 failed_watcher = self._watcher
                 failed_sync = self._sync
                 failed_tray = self._tray
@@ -131,6 +147,7 @@ class ApolloSyncApp:
                 config_manager.start()
             except Exception:
                 logger.exception("Configuration watcher failed to start; continuing without live reload.")
+            self._status.set_watching(True)
 
     def stop(self) -> None:
         """Stop filesystem monitoring and cancel pending playlist callbacks.
@@ -149,14 +166,18 @@ class ApolloSyncApp:
             self._sync = None
             self._config_manager = None
 
-        if config_manager is not None:
-            config_manager.stop()
-        if watcher is not None:
-            watcher.stop()
-        if sync is not None:
-            sync.stop()
-        if tray is not None:
-            tray.stop()
+        self._status.set_watching(False)
+        try:
+            if config_manager is not None:
+                config_manager.stop()
+            if watcher is not None:
+                watcher.stop()
+            if sync is not None:
+                sync.stop()
+            if tray is not None:
+                tray.stop()
+        finally:
+            self._status.set_stopped()
 
     def _on_config_changed(self, old: Config, new: Config) -> None:
         """Apply one atomically replaced configuration to running services."""

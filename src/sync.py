@@ -18,6 +18,7 @@ from .config import Config
 from .converter import convert_playlist
 from .logger import get_logger
 from .notifier import notify
+from .status import ApplicationStatus
 
 logger = get_logger(__name__)
 
@@ -38,11 +39,13 @@ class SyncEngine:
         config: Config,
         *,
         notifier: Callable[[str, str], None] = notify,
+        status: ApplicationStatus | None = None,
     ) -> None:
         """Create and start the single background processing worker."""
         self._config = config
         self._config_lock = Lock()
         self._notifier = notifier
+        self.status = status if status is not None else ApplicationStatus()
         self._queue: queue.Queue[_WorkItem | None] = queue.Queue()
         self._lock = Lock()
         self._active: set[Path] = set()
@@ -130,8 +133,9 @@ class SyncEngine:
                 return
             try:
                 self._process(item.path)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Unexpected playlist processing failure: %s", item.path)
+                self._record_status("processing_failed", item.path, exc)
             finally:
                 if item.completed is not None:
                     item.completed.set()
@@ -148,8 +152,10 @@ class SyncEngine:
 
     def _process(self, playlist_path: Path) -> None:
         """Read, convert, and atomically replace one playlist when necessary."""
+        self._record_status("processing_started", playlist_path)
         if not playlist_path.is_file():
             logger.warning("Playlist disappeared before processing: %s", playlist_path)
+            self._record_status("processing_failed", playlist_path, FileNotFoundError("playlist unavailable"))
             return
 
         logger.info("Playlist processing started: %s", playlist_path)
@@ -161,6 +167,7 @@ class SyncEngine:
             text, encoding = _decode_playlist(raw)
         except (OSError, UnicodeError) as exc:
             logger.error("Failed reading playlist %s (%s): %s", playlist_path, type(exc).__name__, exc)
+            self._record_status("processing_failed", playlist_path, exc)
             self._send_failure(playlist_path)
             return
 
@@ -168,26 +175,37 @@ class SyncEngine:
             result = convert_playlist(text, config.music_root, playlist_path)
         except Exception as exc:
             logger.error("Failed converting playlist %s (%s): %s", playlist_path, type(exc).__name__, exc)
+            self._record_status("processing_failed", playlist_path, exc)
             self._send_failure(playlist_path)
             return
 
         if not result.changed:
             logger.info("Playlist already up to date: %s", playlist_path)
+            self._record_status("processing_succeeded", playlist_path, changed=False)
             return
 
         try:
             _atomic_write(playlist_path, result.converted_text.encode(encoding))
         except (OSError, UnicodeError) as exc:
             logger.error("Failed writing playlist %s (%s): %s", playlist_path, type(exc).__name__, exc)
+            self._record_status("processing_failed", playlist_path, exc)
             self._send_failure(playlist_path)
             return
 
         logger.info("Playlist successfully synced: %s", playlist_path)
+        self._record_status("processing_succeeded", playlist_path, changed=True)
         if config.notifications:
             try:
                 self._notifier("Playlist synced", playlist_path.name)
             except Exception:
                 logger.exception("Notification failed for playlist: %s", playlist_path)
+
+    def _record_status(self, operation: str, playlist: Path, *args: object, **kwargs: object) -> None:
+        """Update diagnostics without allowing status reporting to affect sync."""
+        try:
+            getattr(self.status, operation)(playlist, *args, **kwargs)
+        except Exception:
+            logger.exception("Status update failed for playlist: %s", playlist)
 
     def _send_failure(self, playlist_path: Path) -> None:
         """Send a best-effort failure notification."""

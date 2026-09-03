@@ -13,6 +13,7 @@ from PIL import Image
 
 from .logger import get_logger
 from .utils import asset_path
+from .status import StatusSnapshot
 
 __all__ = ["ApolloSyncTray"]
 
@@ -38,19 +39,24 @@ class ApolloSyncTray:
         open_logs_folder: Callable[[], None],
         run_scan_now: Callable[[], None],
         exit_callback: Callable[[], None],
+        status_provider: Callable[[], StatusSnapshot] | None = None,
     ) -> None:
         """Create the tray icon without starting its UI loop."""
+        self._status_provider = status_provider or (lambda: StatusSnapshot())
         self._icon = pystray.Icon(
             name="apollo_sync",
             icon=_load_icon(),
-            title="Apollo Sync — 🟢 Watching",
+            title="Apollo Sync",
             menu=pystray.Menu(
-                pystray.MenuItem("🟢 Watching", lambda _icon, _item: None, enabled=False),
+                pystray.MenuItem(lambda _item: self._state_text(), None, enabled=False),
+                pystray.MenuItem(lambda _item: self._last_sync_text(), None, enabled=False),
+                pystray.MenuItem(lambda _item: self._stats_text(), None, enabled=False),
+                pystray.MenuItem(lambda _item: self._error_text(), None, enabled=False),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Open Music Folder", _menu_action(open_music_folder)),
                 pystray.MenuItem("Open Playlists Folder", _menu_action(open_playlists_folder)),
-                pystray.MenuItem("Open Logs Folder", _menu_action(open_logs_folder)),
-                pystray.MenuItem("Run Scan Now", _menu_action(run_scan_now)),
+                pystray.MenuItem("Open Logs", _menu_action(open_logs_folder)),
+                pystray.MenuItem("Scan Playlists", _menu_action(run_scan_now)),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Exit", _menu_action(exit_callback)),
             ),
@@ -75,6 +81,44 @@ class ApolloSyncTray:
             return
         self._is_running = False
         self._icon.stop()
+
+    def refresh_status(self, _snapshot: StatusSnapshot | None = None) -> None:
+        """Refresh dynamic status labels after a status update."""
+        if not self._is_running:
+            return
+        try:
+            self._icon.update_menu()
+        except Exception:
+            logger.exception("Failed refreshing tray status.")
+
+    def _snapshot(self) -> StatusSnapshot:
+        try:
+            return self._status_provider()
+        except Exception:
+            logger.exception("Failed reading application status for tray.")
+            return StatusSnapshot(state="error", last_error="Status unavailable")
+
+    def _state_text(self) -> str:
+        snapshot = self._snapshot()
+        if snapshot.state == "starting":
+            return "🟡 Starting..."
+        if snapshot.state == "stopped":
+            return "⚪ Stopped"
+        if snapshot.state == "error":
+            return "🔴 Error / Not watching" if not snapshot.watching else "🔴 Error (watching)"
+        return "🟢 Watching"
+
+    def _last_sync_text(self) -> str:
+        timestamp = self._snapshot().last_sync_time
+        return f"Last sync: {timestamp.strftime('%H:%M:%S') if timestamp else 'never'}"
+
+    def _stats_text(self) -> str:
+        snapshot = self._snapshot()
+        return f"Synced: {snapshot.total_synced}  |  Errors: {snapshot.total_failed}"
+
+    def _error_text(self) -> str:
+        error = self._snapshot().last_error
+        return f"Last error: {error}" if error else "Last error: none"
 
 
 def _menu_action(callback: Callable[[], None]) -> Callable[[pystray.Icon, pystray.MenuItem], None]:
