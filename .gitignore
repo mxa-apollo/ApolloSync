@@ -1,9 +1,13 @@
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 
 build/
 dist/
+build_*/
+dist_*/
+release_*/
 
 logs/
 *.log
