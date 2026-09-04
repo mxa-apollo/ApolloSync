@@ -1,21 +1,46 @@
-# Apollo Sync
+# ApolloSync
 
-Apollo Sync is a small Windows tray utility that keeps `.m3u` and `.m3u8`
-playlists portable. It converts Windows absolute music paths to paths relative
-to the configured music library while preserving comments, blank lines, order,
-URLs, and already-relative paths.
+ApolloSync is a lightweight Windows utility that automatically converts
+absolute file paths in `.m3u` and `.m3u8` playlists into relative paths.
 
-## How it works
+This makes your playlists **portable** — so they can continue working when
+your music library or playlist is moved to another folder, drive, or computer.
 
-At startup Apollo Sync loads the external `config.json`, starts a debounced
+For example:
+
+```text
+D:\Music\Artist\Album\01 - Song.flac
+```
+becomes:
+```text
+..\Music\Artist\Album\01 - Song.flac
+```
+ApolloSync watches your playlist folder and automatically converts eligible
+absolute paths while preserving comments, blank lines, track order, URLs, and
+already-relative paths.
+
+## Why ApolloSync?
+
+Absolute playlist paths are tied to a specific location on a computer. If you
+move your music library or playlists, those paths can become invalid.
+
+Relative playlist paths are based on the location of the playlist itself,
+making them much more portable.
+
+ApolloSync handles this conversion automatically in the background, so you
+don't have to manually edit M3U/M3U8 files.
+
+## How it works?
+
+At startup ApolloSync loads the external config.json, starts a debounced
 watcher for the playlist folder, and processes changes on one background worker.
 Changed files are written through a temporary file, flush, and atomic replacement.
 The tray displays session statistics and the most recent error.
 
 ## Installation and packaged use
 
-For development, run `python run.py` from the repository root. For packaged use,
-distribute the complete `dist/ApolloSync/` folder:
+For development, run python run.py from the repository root. For packaged use,
+distribute the complete dist/ApolloSync/ folder:
 
 ```text
 ApolloSync/
@@ -32,6 +57,7 @@ pyinstaller --clean --noconfirm ApolloSync.spec
 ```
 
 `config.json` is deliberately external and must remain beside the executable.
+
 
 ## First-time setup and config.json
 
