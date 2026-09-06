@@ -30,6 +30,17 @@ making them much more portable.
 ApolloSync handles this conversion automatically in the background, so you
 don't have to manually edit M3U/M3U8 files.
 
+
+## Screenshots
+
+### First-run setup
+
+![ApolloSync Setup Wizard](assets/screenshots/setup-wizard.png)
+
+### System tray
+
+![ApolloSync Tray Menu](assets/screenshots/tray-menu.png)
+
 ## How it works?
 
 At startup ApolloSync loads the external config.json, starts a debounced
