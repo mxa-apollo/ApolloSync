@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from time import sleep
 
-from src.config import ConfigError
+from src.config import Config, ConfigError, ConfigFileError
 from src.logger import get_logger
 from src.main import ApolloSyncApp
+from src.setup_wizard import run_setup_wizard
 from src.utils import config_path
 
 logger = get_logger(__name__)
@@ -18,6 +19,16 @@ def main() -> int:
     app = ApolloSyncApp()
     try:
         logger.info("Apollo Sync starting.")
+        config_file = config_path()
+        try:
+            Config.load(config_file)
+        except ConfigFileError as exc:
+            if config_file.exists():
+                raise
+            logger.info("No local config.json found; opening first-run setup.")
+            if not run_setup_wizard(config_file):
+                logger.info("First-run setup cancelled; Apollo Sync will exit.")
+                return 0
         app.start()
         while not app.shutdown_requested:
             sleep(0.1)

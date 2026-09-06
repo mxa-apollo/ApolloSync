@@ -61,11 +61,18 @@ pyinstaller --clean --noconfirm ApolloSync.spec
 
 ## First-time setup and config.json
 
-Copy `config.example.json` to `config.json` (or create a JSON file) beside
-`run.py` or `ApolloSync.exe`. The required `music_root` setting identifies the
-music library. If the file is missing or invalid, Apollo Sync never creates or
-overwrites it; startup stops with a clear error and the expected path is logged.
-Keep personalized `config.json` files local and distribute the example instead.
+On first launch, when no valid local `config.json` exists, Apollo Sync opens a
+small setup wizard. Choose the music library and the folder containing the M3U/M3U8
+playlists, then select notification and Windows-startup preferences. The wizard
+validates the folders and creates `config.json` only after you choose **Start
+ApolloSync**. Canceling leaves no configuration and exits without starting the
+watcher.
+
+Advanced users can still create or edit `config.json` manually beside `run.py` or
+`ApolloSync.exe`. `config.example.json` is the safe reference template; copy it to
+`config.json` and customize it locally. Personalized `config.json` files should
+never be committed. Existing invalid configuration is never silently overwritten;
+Apollo Sync reports the error and stops until it is corrected.
 
 Supported settings:
 

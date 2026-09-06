@@ -19,6 +19,8 @@
 - M20.1 fresh build and package audit completed in isolated `dist_m20/` output;
   executable and icon are present without external config or runtime logs.
 - Automated pytest verification: 24 tests passed (with an environment cache warning).
+- M22 first-run setup wizard implemented with GUI-independent validation tests (29 tests pass).
+- M22 PyInstaller build verified with explicit Tcl/Tk collection for the wizard.
 
 ## Pending
 
