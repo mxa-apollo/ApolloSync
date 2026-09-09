@@ -41,10 +41,16 @@ class SetupWizardTests(unittest.TestCase):
         self.assertTrue(loaded["notifications"])
 
     def test_invalid_paths_are_rejected(self) -> None:
-        with self.assertRaises(ConfigError):
+        with self.assertRaisesRegex(ConfigError, "music library folder"):
             validate_setup(self.values(music_root=self.root / "missing"))
-        with self.assertRaises(ConfigError):
+        with self.assertRaisesRegex(ConfigError, "playlist folder"):
             validate_setup(self.values(playlist_folder="Missing"))
+
+    def test_empty_paths_explain_what_is_required(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "music library folder"):
+            validate_setup(self.values(music_root=""))
+        with self.assertRaisesRegex(ConfigError, "playlist folder"):
+            validate_setup(self.values(playlist_folder=""))
 
     def test_existing_config_is_never_overwritten(self) -> None:
         target = self.root / "config.json"

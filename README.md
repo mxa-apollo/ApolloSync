@@ -111,14 +111,17 @@ Only the configured playlist folder is watched. Temporary, backup, and
 unsupported files are ignored. Multiple save events are debounced and coalesced
 so one playlist is not processed concurrently.
 
-## Manual Scan Playlists
+## Manual Scan All Playlists
 
-Choose **Scan Playlists** in the tray menu to process eligible playlists in the
-configured folder using the same safe pipeline as watcher events.
+Choose **Scan all playlists** in the tray menu to process eligible playlists in
+the configured folder using the same safe pipeline as automatic monitoring.
+The tray temporarily shows **Scanning playlists...** while the scan is running.
 
 ## Notifications and logs
 
 When enabled, notifications are shown for a successful sync or failed sync.
+Failure notifications direct you to **Open Logs** for technical details;
+unchanged playlists remain silent.
 Notification backend failures are logged and never stop synchronization. Logs are
 written to `logs/apollosync.log`, rotated at 1 MB, and retain five backups. Use
 **Open Logs** in the tray menu for the log directory.

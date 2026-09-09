@@ -56,7 +56,7 @@ class ApolloSyncTray:
                 pystray.MenuItem("Open Music Folder", _menu_action(open_music_folder)),
                 pystray.MenuItem("Open Playlists Folder", _menu_action(open_playlists_folder)),
                 pystray.MenuItem("Open Logs", _menu_action(open_logs_folder)),
-                pystray.MenuItem("Scan Playlists", _menu_action(run_scan_now)),
+                pystray.MenuItem("Scan all playlists", _menu_action(run_scan_now)),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Exit", _menu_action(exit_callback)),
             ),
@@ -102,11 +102,13 @@ class ApolloSyncTray:
         snapshot = self._snapshot()
         if snapshot.state == "starting":
             return "🟡 Starting..."
+        if snapshot.state == "scanning":
+            return "🔵 Scanning playlists..."
         if snapshot.state == "stopped":
             return "⚪ Stopped"
         if snapshot.state == "error":
-            return "🔴 Error / Not watching" if not snapshot.watching else "🔴 Error (watching)"
-        return "🟢 Watching"
+            return "🔴 Error / Not monitoring" if not snapshot.watching else "🔴 Monitoring — last sync failed"
+        return "🟢 Monitoring playlists"
 
     def _last_sync_text(self) -> str:
         timestamp = self._snapshot().last_sync_time
@@ -114,7 +116,7 @@ class ApolloSyncTray:
 
     def _stats_text(self) -> str:
         snapshot = self._snapshot()
-        return f"Synced: {snapshot.total_synced}  |  Errors: {snapshot.total_failed}"
+        return f"Synced this session: {snapshot.total_synced}  |  Errors: {snapshot.total_failed}"
 
     def _error_text(self) -> str:
         error = self._snapshot().last_error

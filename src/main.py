@@ -49,6 +49,7 @@ class ApolloSyncApp:
         self._config_manager: ConfigManager | None = None
         self._shutdown_requested = Event()
         self._state_lock = Lock()
+        self._scan_lock = Lock()
         self._status = ApplicationStatus()
 
     @property
@@ -197,7 +198,10 @@ class ApolloSyncApp:
         if not config.notifications:
             return
         try:
-            notify("Configuration reload failed", type(error).__name__)
+            notify(
+                "Configuration reload failed",
+                "Previous settings remain active. Check config.json or Logs.",
+            )
         except Exception:
             logger.exception("Configuration reload notification failed.")
 
@@ -209,6 +213,10 @@ class ApolloSyncApp:
     def request_exit(self) -> None:
         """Request clean shutdown from a non-main thread such as the tray UI."""
         self._shutdown_requested.set()
+
+    def wait_for_shutdown(self) -> None:
+        """Wait efficiently until the tray requests application shutdown."""
+        self._shutdown_requested.wait()
 
     def open_music_folder(self) -> None:
         """Open the configured music directory in Windows Explorer."""
@@ -224,9 +232,13 @@ class ApolloSyncApp:
 
     def run_scan_now(self) -> None:
         """Process every direct M3U playlist in the configured playlist folder."""
-        config = self._require_config()
-        logger.info("Manual playlist scan started.")
+        if not self._scan_lock.acquire(blocking=False):
+            logger.info("Manual playlist scan ignored because one is already running.")
+            return
         try:
+            config = self._require_config()
+            logger.info("Manual playlist scan started.")
+            self._status.set_scanning()
             playlist_paths = tuple(
                 path
                 for pattern in ("*.m3u", "*.m3u8")
@@ -234,12 +246,22 @@ class ApolloSyncApp:
             )
         except OSError:
             logger.exception("Failed listing playlist folder for manual scan.")
+            self._status.set_watching(True)
+            self._scan_lock.release()
             return
+        except Exception:
+            self._scan_lock.release()
+            raise
 
         sync = self._sync
-        if sync is not None:
-            sync.scan(playlist_paths)
-            logger.info("Manual playlist scan completed: %d playlists.", len(playlist_paths))
+        try:
+            if sync is not None:
+                sync.scan(playlist_paths)
+                logger.info("Manual playlist scan completed: %d playlists checked.", len(playlist_paths))
+        finally:
+            if self._watcher is not None and self._watcher.is_running:
+                self._status.set_watching(True)
+            self._scan_lock.release()
 
     def _require_config(self) -> Config:
         """Return startup configuration or fail clearly before the app starts."""

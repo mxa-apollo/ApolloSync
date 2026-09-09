@@ -214,7 +214,7 @@ class SyncEngine:
         if not notifications_enabled:
             return
         try:
-            self._notifier("Playlist sync failed", playlist_path.name)
+            self._notifier("Playlist sync failed", f"{playlist_path.name}. Check Logs for details.")
         except Exception:
             logger.exception("Notification failed for playlist: %s", playlist_path)
 

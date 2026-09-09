@@ -37,19 +37,22 @@ def validate_setup(values: SetupValues) -> Config:
     be directories. This prevents the watcher from starting against a typo.
     Relative playlist folders are interpreted relative to ``music_root``.
     """
-    try:
-        config = Config(
-            values.music_root,
-            values.playlist_folder,
-            notifications=values.notifications,
-            start_with_windows=values.start_with_windows,
-        )
-    except ConfigError:
-        raise
+    if not str(values.music_root).strip():
+        raise ConfigError("Select a music library folder before continuing.")
+    if not str(values.playlist_folder).strip():
+        raise ConfigError("Select a playlist folder before continuing.")
+    config = Config(
+        values.music_root,
+        values.playlist_folder,
+        notifications=values.notifications,
+        start_with_windows=values.start_with_windows,
+    )
     if not config.music_root.is_dir():
-        raise ConfigError("Select an existing music library folder.")
+        raise ConfigError("The music library folder must already exist. Choose an existing folder.")
     if not config.playlist_path.is_dir():
-        raise ConfigError("Select an existing playlist folder.")
+        raise ConfigError(
+            "The playlist folder must already exist. Choose an existing folder containing your M3U/M3U8 files."
+        )
     return config
 
 
@@ -98,7 +101,8 @@ def run_setup_wizard(config_path: Path | str) -> bool:
     ttk.Label(
         frame,
         text="ApolloSync keeps M3U/M3U8 playlists portable by converting\n"
-        "absolute music paths into relative paths.",
+        "absolute music paths into relative paths. It monitors your playlist folder\n"
+        "and updates playlists only when a conversion is needed.",
     ).grid(row=1, column=0, columnspan=3, pady=(6, 14), sticky="w")
 
     music_var = tk.StringVar()
@@ -106,20 +110,48 @@ def run_setup_wizard(config_path: Path | str) -> bool:
     notifications_var = tk.BooleanVar(value=True)
     startup_var = tk.BooleanVar(value=False)
 
-    _path_row(frame, 2, "Music library", music_var, choose_directory=True)
-    _path_row(frame, 3, "Playlist folder", playlist_var, choose_directory=True)
+    music_entry = _path_row(
+        frame,
+        2,
+        "Music library *",
+        "Folder containing your music files.",
+        music_var,
+        choose_directory=True,
+    )
+    playlist_entry = _path_row(
+        frame,
+        4,
+        "Playlist folder *",
+        "Folder containing the M3U/M3U8 files ApolloSync will monitor.",
+        playlist_var,
+        choose_directory=True,
+    )
+    ttk.Label(
+        frame,
+        text="A relative folder is resolved under the music library; Browse may select an absolute folder.",
+        wraplength=430,
+    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
     ttk.Checkbutton(frame, text="Show desktop notifications", variable=notifications_var).grid(
-        row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        row=7, column=0, columnspan=3, sticky="w", pady=(8, 0)
     )
     ttk.Checkbutton(frame, text="Start ApolloSync with Windows", variable=startup_var).grid(
-        row=5, column=0, columnspan=3, sticky="w"
+        row=8, column=0, columnspan=3, sticky="w"
+    )
+    ttk.Label(frame, text="Cancel closes setup without creating a configuration file.").grid(
+        row=9, column=0, columnspan=3, sticky="w", pady=(8, 0)
     )
 
     def finish() -> None:
         try:
+            music_text = music_var.get().strip()
+            playlist_text = playlist_var.get().strip()
+            if not music_text:
+                raise ConfigError("Select a music library folder before continuing.")
+            if not playlist_text:
+                raise ConfigError("Select a playlist folder before continuing.")
             values = SetupValues(
-                Path(music_var.get().strip()),
-                Path(playlist_var.get().strip()),
+                Path(music_text),
+                Path(playlist_text),
                 notifications_var.get(),
                 startup_var.get(),
             )
@@ -134,10 +166,20 @@ def run_setup_wizard(config_path: Path | str) -> bool:
         root.destroy()
 
     buttons = ttk.Frame(frame)
-    buttons.grid(row=6, column=0, columnspan=3, pady=(16, 0), sticky="e")
+    buttons.grid(row=10, column=0, columnspan=3, pady=(8, 0), sticky="e")
     ttk.Button(buttons, text="Cancel", command=cancel).pack(side="left", padx=(0, 8))
-    ttk.Button(buttons, text="Start ApolloSync", command=finish).pack(side="left")
+    start_button = ttk.Button(buttons, text="Start ApolloSync", command=finish)
+    start_button.pack(side="left")
     root.protocol("WM_DELETE_WINDOW", cancel)
+
+    def submit_from_entry(_event: object) -> str:
+        start_button.invoke()
+        return "break"
+
+    music_entry.bind("<Return>", submit_from_entry)
+    playlist_entry.bind("<Return>", submit_from_entry)
+    root.bind("<Escape>", lambda _event: cancel())
+    root.after_idle(music_entry.focus_set)
     root.mainloop()
     return result[0]
 
@@ -146,12 +188,17 @@ def _path_row(
     parent: ttk.Frame,
     row: int,
     label: str,
+    helper: str,
     variable: tk.StringVar,
     *,
     choose_directory: bool,
-) -> None:
+) -> ttk.Entry:
     ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
-    ttk.Entry(parent, textvariable=variable, width=42).grid(row=row, column=1, padx=8, pady=4)
+    entry = ttk.Entry(parent, textvariable=variable, width=42)
+    entry.grid(row=row, column=1, padx=8, pady=4)
+    ttk.Label(parent, text=helper, wraplength=430).grid(
+        row=row + 1, column=0, columnspan=3, sticky="w", pady=(0, 4)
+    )
 
     def browse() -> None:
         selected = filedialog.askdirectory(title=f"Choose {label}") if choose_directory else ""
@@ -159,3 +206,4 @@ def _path_row(
             variable.set(selected)
 
     ttk.Button(parent, text="Browse...", command=browse).grid(row=row, column=2, pady=4)
+    return entry

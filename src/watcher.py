@@ -104,7 +104,7 @@ class PlaylistWatcher(FileSystemEventHandler):
                 observer.unschedule_all()
                 raise
             self._observer = observer
-            logger.info("Watching playlist folder: %s", self._playlist_folder)
+            logger.info("Monitoring playlist folder: %s", self._playlist_folder)
 
     def stop(self) -> None:
         """Stop observing and cancel callbacks that have not fired yet.

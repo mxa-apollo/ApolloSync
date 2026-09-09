@@ -67,6 +67,10 @@ class ApplicationStatus:
         """Set whether filesystem watching is active."""
         self._update(state="watching" if watching else "stopped", watching=watching)
 
+    def set_scanning(self) -> None:
+        """Temporarily indicate that a manual playlist scan is running."""
+        self._update(state="scanning", watching=True)
+
     def set_error(self, message: str) -> None:
         """Record an application-level startup/runtime error."""
         self._update(state="error", watching=False, last_error=_short_error(message))
